@@ -1,0 +1,66 @@
+{
+  "1": {
+    "inputs": {
+      "image": "/path/to/your/image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Input Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "apply_attention": false,
+      "center_x": 0.5,
+      "center_y": 0.5,
+      "radius": 0.5
+    },
+    "class_type": "Qwen2VLImageEncoder",
+    "_meta": {
+      "title": "Encode with Qwen2VL"
+    }
+  },
+  "3": {
+    "inputs": {
+      "qwen_embedding": [
+        "2",
+        0
+      ],
+      "qwen_grid_thw": [
+        "2",
+        1
+      ],
+      "prompt": "A beautiful landscape with mountains and a sunset",
+      "mode": "variation",
+      "guidance_scale": 3.5,
+      "num_inference_steps": 28,
+      "aspect_ratio": "1:1",
+      "batch_size": 2,
+      "seed": 42,
+      "enable_depth_control": false,
+      "enable_line_control": false,
+      "denoise_strength": 0.8
+    },
+    "class_type": "FLUXGeneratorDualGPU",
+    "_meta": {
+      "title": "Generate with FLUX (Variation)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "images": [
+        "3",
+        0
+      ],
+      "filename_prefix": "qwen2vl_flux_variation"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Output Images"
+    }
+  }
+}

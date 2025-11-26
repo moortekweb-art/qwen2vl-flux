@@ -1,0 +1,89 @@
+{
+  "1": {
+    "inputs": {
+      "image": "/path/to/your/reference/image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Reference Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "/path/to/your/modification/image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Target Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "apply_attention": false
+    },
+    "class_type": "Qwen2VLImageEncoder",
+    "_meta": {
+      "title": "Encode Reference (Qwen2VL)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "apply_attention": false
+    },
+    "class_type": "Qwen2VLImageEncoder",
+    "_meta": {
+      "title": "Encode Target (Qwen2VL)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "qwen_embedding": [
+        "4",
+        0
+      ],
+      "qwen_grid_thw": [
+        "4",
+        1
+      ],
+      "prompt": "Transform the image style while preserving structure",
+      "mode": "img2img",
+      "guidance_scale": 3.5,
+      "num_inference_steps": 28,
+      "aspect_ratio": "1:1",
+      "batch_size": 2,
+      "seed": 42,
+      "input_image": [
+        "1",
+        0
+      ],
+      "denoise_strength": 0.6,
+      "enable_depth_control": false,
+      "enable_line_control": false
+    },
+    "class_type": "FLUXGeneratorDualGPU",
+    "_meta": {
+      "title": "Generate with FLUX (Image-to-Image)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "images": [
+        "5",
+        0
+      ],
+      "filename_prefix": "qwen2vl_flux_img2img"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Output Images"
+    }
+  }
+}

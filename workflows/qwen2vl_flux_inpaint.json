@@ -1,0 +1,80 @@
+{
+  "1": {
+    "inputs": {
+      "image": "/path/to/your/image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image to Inpaint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "/path/to/your/mask.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Inpaint Mask"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "apply_attention": false
+    },
+    "class_type": "Qwen2VLImageEncoder",
+    "_meta": {
+      "title": "Encode Image (Qwen2VL)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "qwen_embedding": [
+        "3",
+        0
+      ],
+      "qwen_grid_thw": [
+        "3",
+        1
+      ],
+      "prompt": "Fill the masked region with a beautiful landscape",
+      "mode": "inpaint",
+      "guidance_scale": 3.5,
+      "num_inference_steps": 28,
+      "aspect_ratio": "1:1",
+      "batch_size": 1,
+      "seed": 42,
+      "input_image": [
+        "1",
+        0
+      ],
+      "mask_image": [
+        "2",
+        0
+      ],
+      "denoise_strength": 0.8,
+      "enable_depth_control": false,
+      "enable_line_control": false
+    },
+    "class_type": "FLUXGeneratorDualGPU",
+    "_meta": {
+      "title": "Generate with FLUX (Inpaint)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "images": [
+        "4",
+        0
+      ],
+      "filename_prefix": "qwen2vl_flux_inpaint"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Inpainted Image"
+    }
+  }
+}
