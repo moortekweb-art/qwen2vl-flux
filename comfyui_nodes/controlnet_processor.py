@@ -12,9 +12,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.insert(0, parent_dir)
+# Use realpath to resolve symlinks first
+real_file = os.path.realpath(__file__)
+current_dir = os.path.dirname(real_file)
+# Go up one level: comfyui_nodes/ -> qwen2vl-flux/ (project root)
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
 
 try:
     from model import FluxModel
