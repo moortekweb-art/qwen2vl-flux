@@ -1,10 +1,40 @@
-# Qwen2VL-Flux: Unifying Image and Text Guidance for Controllable Image Generation
+# Qwen2VL-FLUX: Dual-GPU Image Generation Pipeline
 
-This repository contains a powerful image generation model that combines the capabilities of Stable Diffusion with multimodal understanding. The model can generate, modify, and transform images using both text and image inputs.
+A production-ready implementation combining Qwen2VL vision-language understanding with FLUX image generation, optimized for dual-GPU systems with ComfyUI integration.
 
-This implementation uses Qwen2VL as the vision-language model for enhanced multimodal understanding, integrated with the Flux architecture. It also supports ControlNet features including depth estimation and line detection for more precise image generation control.
+**Status**: ✅ Production Ready | **GPU Support**: Dual GPU (80GB+ VRAM) | **Interface**: ComfyUI Web UI
 
-For technical details, please refer to our [technical report](technical-report.pdf).
+## Quick Links
+
+- 📖 **[QUICKSTART.md](QUICKSTART.md)** - Get started in 5 minutes
+- 🎨 **[COMFYUI_INTEGRATION.md](COMFYUI_INTEGRATION.md)** - Complete ComfyUI setup guide
+- 🚀 **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Production deployment strategies
+- 📋 **[PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md)** - Pre-deployment checklist
+- 📊 **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** - Complete project overview
+
+## What This Does
+
+This pipeline enables advanced image generation with multiple modes:
+
+- **Image Variation** - Generate creative variations of input images
+- **Image-to-Image** - Style transfer and image transformation
+- **Inpainting** - Intelligently fill masked regions
+- **ControlNet** - Guided generation with depth and line control
+- **Batch Processing** - Generate multiple images in parallel
+
+All with a simple visual interface through ComfyUI or programmatic API.
+
+## Key Features
+
+✅ **Dual-GPU Optimization** - Splits model across 2 GPUs to prevent OOM
+✅ **Production Ready** - Docker containerized with monitoring support
+✅ **Visual Interface** - ComfyUI custom nodes for drag-and-drop workflows
+✅ **Multiple Generation Modes** - Variation, img2img, inpaint, ControlNet
+✅ **High Quality** - 28-step diffusion process (20 steps for faster inference)
+✅ **Flexible Deployment** - Local, Docker, Kubernetes, or API
+✅ **Comprehensive Documentation** - 4 detailed guides covering all aspects
+
+This implementation uses Qwen2VL as the vision-language model for enhanced multimodal understanding, integrated with the FLUX architecture. It also supports ControlNet features including depth estimation and line detection for more precise image generation control.
 
 ## Model Architecture
 
