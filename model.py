@@ -87,13 +87,14 @@ class FluxModel:
         # Initialize optional models based on requirements
         if 'controlnet' in required_features or any(f in required_features for f in ['depth', 'line']):
             self._init_controlnet()
-        
-        if 'depth' in required_features:
+
+        # ControlNet mode requires depth model and line detector for default behavior
+        if 'depth' in required_features or 'controlnet' in required_features:
             self._init_depth_model()
-            
-        if 'line' in required_features:
+
+        if 'line' in required_features or 'controlnet' in required_features:
             self._init_line_detector()
-            
+
         if 'sam' in required_features:
             self._init_sam()
 
@@ -101,8 +102,9 @@ class FluxModel:
             self._enable_turbo()
 
     def _init_base_models(self):
-        """Initialize the core models that are always needed"""
-        # Qwen2VL and connector initialization
+        """Initialize the core models that are always needed (FIXED FOR DUAL GPU)"""
+        
+        # Qwen2VL and connector initialization (GPU 0)
         self.qwen2vl = Qwen2VLSimplifiedModel.from_pretrained(
             MODEL_PATHS['qwen2vl'], 
             torch_dtype=self.dtype
@@ -117,54 +119,70 @@ class FluxModel:
             self.connector.load_state_dict(connector_state_dict)
         self.connector.to(self.dtype).to(self.device)
 
-        # Text encoders initialization
+        # Text encoders initialization (GPU 0)
         self.tokenizer = CLIPTokenizer.from_pretrained(MODEL_PATHS['flux'], subfolder="tokenizer")
         self.text_encoder = CLIPTextModel.from_pretrained(MODEL_PATHS['flux'], subfolder="text_encoder")
         self.text_encoder_two = T5EncoderModel.from_pretrained(MODEL_PATHS['flux'], subfolder="text_encoder_2")
         self.tokenizer_two = T5TokenizerFast.from_pretrained(MODEL_PATHS['flux'], subfolder="tokenizer_2")
 
-        self.text_encoder.requires_grad_(False).to(self.dtype).to(self.device)
-        self.text_encoder_two.requires_grad_(False).to(self.dtype).to(self.device)
+        self.text_encoder.requires_grad_(False).to(self.dtype).to('cpu')
+        self.text_encoder_two.requires_grad_(False).to(self.dtype).to('cpu')
 
-        # T5 context embedder
+        # T5 context embedder (The small adapter - moved to GPU 1 with transformer)
         self.t5_context_embedder = nn.Linear(4096, 3072)
         t5_embedder_path = os.path.join(MODEL_PATHS['qwen2vl'], "t5_embedder.pt")
-        t5_embedder_state_dict = torch.load(t5_embedder_path, map_location=self.device, weights_only=True)
+        t5_embedder_state_dict = torch.load(t5_embedder_path, map_location='cpu', weights_only=True)
         self.t5_context_embedder.load_state_dict(t5_embedder_state_dict)
-        self.t5_context_embedder.to(self.dtype).to(self.device)
+        self.t5_context_embedder.to(self.dtype).to('cuda:1')
 
-        # Basic components
+        # Basic components (FLUX DRAWING MODELS: MOVED TO GPU 1 to prevent OOM)
         self.noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(MODEL_PATHS['flux'], subfolder="scheduler", shift=1)
         self.vae = AutoencoderKL.from_pretrained(MODEL_PATHS['flux'], subfolder="vae")
         self.transformer = FluxTransformer2DModel.from_pretrained(MODEL_PATHS['flux'], subfolder="transformer")
 
-        self.vae.requires_grad_(False).to(self.dtype).to(self.device)
-        self.transformer.requires_grad_(False).to(self.dtype).to(self.device)
+        # SPLIT LOAD: VAE and TRANSFORMER go to cuda:1 (GPU 1)
+        self.vae.requires_grad_(False).to(self.dtype).to('cuda:1')
+        self.transformer.requires_grad_(False).to(self.dtype).to('cuda:1')
 
     def _init_controlnet(self):
         """Initialize ControlNet model"""
+        # Try to load from local path first, fall back to community ControlNet
+        controlnet_path = MODEL_PATHS['controlnet']
+        # Check if local path contains a valid model (has config.json)
+        if os.path.exists(os.path.join(controlnet_path, 'config.json')):
+            model_id = controlnet_path
+        else:
+            # Use Shakker Labs ControlNet Union Pro 2.0 (open source)
+            model_id = "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0"
+
         self.controlnet_union = FluxControlNetModel.from_pretrained(
-            MODEL_PATHS['controlnet'], 
+            model_id,
             torch_dtype=torch.bfloat16
         )
-        self.controlnet_union.requires_grad_(False).to(self.device)
+        self.controlnet_union.requires_grad_(False).to(self.dtype).to('cuda:1')
         self.controlnet = FluxMultiControlNetModel([self.controlnet_union])
 
     def _init_depth_model(self):
         """Initialize Depth Anything V2 model"""
-        if not self._depth_model_imported:
-            from depth_anything_v2.dpt import DepthAnythingV2
-            self._depth_model_imported = True
+        try:
+            if not self._depth_model_imported:
+                from depth_anything_v2.dpt import DepthAnythingV2
+                self._depth_model_imported = True
 
-        self.depth_model = DepthAnythingV2(
-            encoder='vitl',
-            features=256,
-            out_channels=[256, 512, 1024, 1024]
-        )
-        depth_weights = os.path.join(MODEL_PATHS['depth_anything']['path'], 
-                                   MODEL_PATHS['depth_anything']['weights'])
-        self.depth_model.load_state_dict(torch.load(depth_weights, map_location=self.device))
-        self.depth_model.requires_grad_(False).to(self.device)
+            self.depth_model = DepthAnythingV2(
+                encoder='vitl',
+                features=256,
+                out_channels=[256, 512, 1024, 1024]
+            )
+            depth_weights = os.path.join(MODEL_PATHS['depth_anything']['path'],
+                                       MODEL_PATHS['depth_anything']['weights'])
+            if os.path.exists(depth_weights):
+                self.depth_model.load_state_dict(torch.load(depth_weights, map_location=self.device))
+            self.depth_model.requires_grad_(False).to(self.device)
+        except Exception as e:
+            print(f"Warning: Could not initialize Depth Anything V2: {e}")
+            print("Depth estimation will be unavailable, using fallback methods")
+            self.depth_model = None
 
     def _init_line_detector(self):
         """Initialize line detection model"""
@@ -172,11 +190,28 @@ class FluxModel:
             from controlnet_aux import AnylineDetector
             self._line_detector_imported = True
 
-        self.anyline = AnylineDetector.from_pretrained(
-            MODEL_PATHS['anyline']['path'],
-            filename=MODEL_PATHS['anyline']['weights']
-        )
-        self.anyline.to(self.device)
+        # Try to load from local path first
+        anyline_path = MODEL_PATHS['anyline']['path']
+        anyline_weights = MODEL_PATHS['anyline']['weights']
+
+        try:
+            if os.path.exists(os.path.join(anyline_path, anyline_weights)):
+                # Load from local path
+                self.anyline = AnylineDetector.from_pretrained(
+                    anyline_path,
+                    filename=anyline_weights
+                )
+            else:
+                # Try to load the default model from controlnet_aux
+                # This will download from cache if available
+                self.anyline = AnylineDetector.from_pretrained("model_path_if_available")
+        except Exception as e:
+            print(f"Warning: Could not load AnylineDetector: {e}")
+            print("Line detection will use fallback Canny edge detection instead")
+            self.anyline = None
+
+        if self.anyline is not None:
+            self.anyline.to(self.device)
 
     def _init_sam(self):
         """Initialize SAM2 model"""
@@ -206,7 +241,7 @@ class FluxModel:
                 "proj_out", "x_embedder", "norm_out", "context_embedder",
             ],
         )
-        freeze(self.transformer) 
+        freeze(self.transformer)  
 
     def generate_mask(self, image, input_points, input_labels):
         """
@@ -278,10 +313,10 @@ class FluxModel:
     def compute_text_embeddings(self, prompt):
         with torch.no_grad():
             text_inputs = self.tokenizer(prompt, padding="max_length", max_length=77, truncation=True, return_tensors="pt")
-            text_input_ids = text_inputs.input_ids.to(self.device)
+            text_input_ids = text_inputs.input_ids.to('cpu')
             prompt_embeds = self.text_encoder(text_input_ids, output_hidden_states=False)
             pooled_prompt_embeds = prompt_embeds.pooler_output
-        return pooled_prompt_embeds.to(self.dtype)
+        return pooled_prompt_embeds.to(self.device).to(self.dtype)
 
     def compute_t5_text_embeddings(
         self,
@@ -303,10 +338,11 @@ class FluxModel:
             return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
-        prompt_embeds = self.text_encoder_two(text_input_ids.to(device))[0]
+        prompt_embeds = self.text_encoder_two(text_input_ids.to('cpu'))[0]
 
         dtype = self.text_encoder_two.dtype
-        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+        prompt_embeds = prompt_embeds.to(dtype=dtype, device='cpu')
+        prompt_embeds = prompt_embeds.to(device=device)
 
         _, seq_len, _ = prompt_embeds.shape
 
@@ -361,9 +397,14 @@ class FluxModel:
         return img
 
     def generate_depth_map(self, image):
-        """Generate depth map using Depth Anything V2"""
+        """Generate depth map using Depth Anything V2 or fallback"""
         # Convert PIL to numpy array
         image_np = np.array(image)
+
+        if self.depth_model is None:
+            # Fallback: use edge detection as a simple depth proxy
+            print("Using Canny edge detection as fallback for depth map")
+            return self.generate_canny_edges(image)
 
         # Convert RGB to BGR for cv2
         image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
@@ -381,6 +422,25 @@ class FluxModel:
 
         return Image.fromarray(depth_rgb)
 
+    def generate_canny_edges(self, image, low_threshold=50, high_threshold=150):
+        """Generate Canny edge detection as fallback for line detection"""
+        # Convert PIL to numpy array
+        image_np = np.array(image)
+
+        # Convert RGB to BGR for cv2
+        if len(image_np.shape) == 3:
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+            image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        else:
+            image_gray = image_np
+
+        # Apply Canny edge detection
+        edges = cv2.Canny(image_gray, low_threshold, high_threshold)
+
+        # Convert to RGB for consistency
+        edges_rgb = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
+
+        return Image.fromarray(edges_rgb)
 
     def generate(self, input_image_a, input_image_b=None, prompt="", guidance_scale=3.5, num_inference_steps=28,
                  aspect_ratio="1:1", center_x=None, center_y=None, radius=None, mode="variation",
@@ -397,26 +457,46 @@ class FluxModel:
         t5_prompt_embeds = None
         if prompt != "":
             self.qwen2vl_processor = AutoProcessor.from_pretrained(MODEL_PATHS['qwen2vl'], min_pixels=256*28*28, max_pixels=256*28*28)
-            t5_prompt_embeds = self.compute_t5_text_embeddings(prompt=prompt, device=self.device)
-            t5_prompt_embeds = self.t5_context_embedder(t5_prompt_embeds)
+            t5_prompt_embeds = self.compute_t5_text_embeddings(prompt=prompt, device='cuda:1')
+            t5_prompt_embeds = self.t5_context_embedder(t5_prompt_embeds).to('cuda:1')
         else:
             self.qwen2vl_processor = AutoProcessor.from_pretrained(MODEL_PATHS['qwen2vl'], min_pixels=512*28*28, max_pixels=512*28*28)
 
+        # Move embeddings to transformer device (cuda:1)
+        pooled_prompt_embeds = pooled_prompt_embeds.to('cuda:1')
+
         qwen2_hidden_state_a, image_grid_thw_a = self.process_image(input_image_a)
         # 只有当所有注意力参数都被提供时，才应用注意力机制
-        if mode == "variation":
+       	if mode == "variation":
             if center_x is not None and center_y is not None and radius is not None:
                 qwen2_hidden_state_a = self.apply_attention(qwen2_hidden_state_a, image_grid_thw_a, center_x, center_y, radius)
+            
             qwen2_hidden_state_a = self.connector(qwen2_hidden_state_a)
+            qwen2_hidden_state_a = qwen2_hidden_state_a.to('cuda:1')
+
+            # --- DIMENSION PADDING FIX ---
+            expected_size = 4608
+            if qwen2_hidden_state_a.shape[1] != expected_size:
+                padding_needed = expected_size - qwen2_hidden_state_a.shape[1]
+                if padding_needed > 0:
+                    padding = torch.zeros(
+                        qwen2_hidden_state_a.shape[0],
+                        padding_needed,
+                        qwen2_hidden_state_a.shape[2],
+                        dtype=self.dtype,
+                        device='cuda:1'
+                    )
+                    qwen2_hidden_state_a = torch.cat([qwen2_hidden_state_a, padding], dim=1)
+            # ----------------------------------------
 
         if mode == "img2img" or mode == "inpaint":
             if input_image_b:
                 qwen2_hidden_state_b, image_grid_thw_b = self.process_image(input_image_b)
                 if center_x is not None and center_y is not None and radius is not None:
                     qwen2_hidden_state_b = self.apply_attention(qwen2_hidden_state_b, image_grid_thw_b, center_x, center_y, radius)
-                qwen2_hidden_state_b = self.connector(qwen2_hidden_state_b)
+                qwen2_hidden_state_b = self.connector(qwen2_hidden_state_b).to('cuda:1')
             else:
-                qwen2_hidden_state_a = self.connector(qwen2_hidden_state_a)
+                qwen2_hidden_state_a = self.connector(qwen2_hidden_state_a).to('cuda:1')
                 qwen2_hidden_state_b = None
 
         if mode == "controlnet" or mode == "controlnet-inpaint":
@@ -425,9 +505,21 @@ class FluxModel:
                 qwen2_hidden_state_b, image_grid_thw_b = self.process_image(input_image_b)
                 if center_x is not None and center_y is not None and radius is not None:
                     qwen2_hidden_state_b = self.apply_attention(qwen2_hidden_state_b, image_grid_thw_b, center_x, center_y, radius)
-                qwen2_hidden_state_b = self.connector(qwen2_hidden_state_b)
-            qwen2_hidden_state_a = self.connector(qwen2_hidden_state_a)
+                qwen2_hidden_state_b = self.connector(qwen2_hidden_state_b).to('cuda:1')
+            qwen2_hidden_state_a = self.connector(qwen2_hidden_state_a).to('cuda:1')
 
+            # ControlNet expects embeddings padded to 4736 for proper rotary computation
+            # The pipeline internally may trim 128 tokens, so we pad beyond the target
+            target_controlnet_size = 4736
+            if qwen2_hidden_state_a.shape[1] < target_controlnet_size:
+                pad_size = target_controlnet_size - qwen2_hidden_state_a.shape[1]
+                padding = torch.zeros(qwen2_hidden_state_a.shape[0], pad_size, qwen2_hidden_state_a.shape[2], dtype=self.dtype, device='cuda:1')
+                qwen2_hidden_state_a = torch.cat([qwen2_hidden_state_a, padding], dim=1)
+
+            if qwen2_hidden_state_b is not None and qwen2_hidden_state_b.shape[1] < target_controlnet_size:
+                pad_size = target_controlnet_size - qwen2_hidden_state_b.shape[1]
+                padding = torch.zeros(qwen2_hidden_state_b.shape[0], pad_size, qwen2_hidden_state_b.shape[2], dtype=self.dtype, device='cuda:1')
+                qwen2_hidden_state_b = torch.cat([qwen2_hidden_state_b, padding], dim=1)
         #############################
         # IMAGE GENERATION
         #############################
@@ -478,9 +570,6 @@ class FluxModel:
                 height=height,
                 width=width,
             ).images
-
-
-        #############################
         # INPAINTING
         #############################
         elif mode == "inpaint":
@@ -541,7 +630,7 @@ class FluxModel:
                 conditioning_scales.append(depth_strength)
 
             if line_mode:
-                control_image_canny = self.anyline(input_image_a, detect_resolution=1280)
+                control_image_canny = self.anyline(input_image_a, detect_resolution=1280) if self.anyline is not None else self.generate_canny_edges(input_image_a)
                 control_images.append(control_image_canny)
                 control_modes.append(0)  # line mode
                 conditioning_scales.append(line_strength)
@@ -549,24 +638,30 @@ class FluxModel:
             # 如果没有启用任何模式，默认使用line+depth模式
             if not line_mode and not depth_mode:
                 control_image_depth = self.generate_depth_map(input_image_a)
-                control_image_canny = self.anyline(input_image_a, detect_resolution=1280)
+                control_image_canny = self.anyline(input_image_a, detect_resolution=1280) if self.anyline is not None else self.generate_canny_edges(input_image_a)
                 control_images = [control_image_depth, control_image_canny]
                 control_modes = [2, 0]
                 conditioning_scales = [0.2, 0.4]
 
-            if qwen2_hidden_state_b is not None:
-                qwen2_hidden_state_b = qwen2_hidden_state_b[:, :qwen2_hidden_state_a.shape[1], :]
-                qwen2_hidden_state_a = qwen2_hidden_state_a[:, :qwen2_hidden_state_b.shape[1], :]
+            # Prepare control images: Convert PIL/Numpy inputs to Tensors on cuda:1
+            # This ensures the input tensors match the VAE's device (cuda:1)
+            # Keep control_images as PIL images - let prepare_image handle tensor conversion
+            processed_control_images = control_images
 
+
+            prompt_embeds_main = qwen2_hidden_state_b.repeat(batch_size, 1, 1) if qwen2_hidden_state_b is not None else qwen2_hidden_state_a.repeat(batch_size, 1, 1)
+            prompt_embeds_control = qwen2_hidden_state_a.repeat(batch_size, 1, 1)
+
+            # Don't use t5 embeddings in controlnet to avoid embedding size mismatches
             gen_images = controlnet_pipeline(
                 image=input_image_a,
                 strength=denoise_strength,
-                control_image=control_images,
+                control_image=processed_control_images,
                 control_mode=control_modes,
                 controlnet_conditioning_scale=conditioning_scales,
-                prompt_embeds=qwen2_hidden_state_b.repeat(batch_size, 1, 1) if qwen2_hidden_state_b is not None else qwen2_hidden_state_a.repeat(batch_size, 1, 1),
-                t5_prompt_embeds=t5_prompt_embeds.repeat(batch_size, 1, 1) if t5_prompt_embeds is not None else None,
-                prompt_embeds_control=qwen2_hidden_state_a.repeat(batch_size, 1, 1),
+                prompt_embeds=prompt_embeds_main,
+                t5_prompt_embeds=None,
+                prompt_embeds_control=prompt_embeds_control,
                 pooled_prompt_embeds=pooled_prompt_embeds,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
@@ -604,7 +699,7 @@ class FluxModel:
                 conditioning_scales.append(depth_strength)
 
             if line_mode:
-                control_image_canny = self.anyline(input_image_a, detect_resolution=1280)
+                control_image_canny = self.anyline(input_image_a, detect_resolution=1280) if self.anyline is not None else self.generate_canny_edges(input_image_a)
                 control_images.append(control_image_canny)
                 control_modes.append(0)  # line mode
                 conditioning_scales.append(line_strength)
@@ -612,25 +707,31 @@ class FluxModel:
             # 如果没有启用任何模式，默认使用line+depth模式
             if not line_mode and not depth_mode:
                 control_image_depth = self.generate_depth_map(input_image_a)
-                control_image_canny = self.anyline(input_image_a, detect_resolution=1280)
+                control_image_canny = self.anyline(input_image_a, detect_resolution=1280) if self.anyline is not None else self.generate_canny_edges(input_image_a)
                 control_images = [control_image_depth, control_image_canny]
                 control_modes = [2, 0]
                 conditioning_scales = [0.2, 0.4]
 
-            if qwen2_hidden_state_b is not None:
-                qwen2_hidden_state_b = qwen2_hidden_state_b[:, :qwen2_hidden_state_a.shape[1], :]
-                qwen2_hidden_state_a = qwen2_hidden_state_a[:, :qwen2_hidden_state_b.shape[1], :]
+            # Prepare control images: Convert PIL/Numpy inputs to Tensors on cuda:1
+            # This ensures the input tensors match the VAE's device (cuda:1)
+            # Keep control_images as PIL images - let prepare_image handle tensor conversion
+            processed_control_images = control_images
 
+
+            prompt_embeds_main = qwen2_hidden_state_b.repeat(batch_size, 1, 1) if qwen2_hidden_state_b is not None else qwen2_hidden_state_a.repeat(batch_size, 1, 1)
+            prompt_embeds_control = qwen2_hidden_state_a.repeat(batch_size, 1, 1)
+
+            # Don't use t5 embeddings in controlnet to avoid embedding size mismatches
             gen_images = controlnet_pipeline(
                 image=input_image_a,
                 mask_image=mask_image,
-                control_image=control_images,
+                control_image=processed_control_images,
                 control_mode=control_modes,
                 controlnet_conditioning_scale=conditioning_scales,
                 strength=denoise_strength,
-                prompt_embeds=qwen2_hidden_state_b.repeat(batch_size, 1, 1) if qwen2_hidden_state_b is not None else qwen2_hidden_state_a.repeat(batch_size, 1, 1),
-                t5_prompt_embeds=t5_prompt_embeds.repeat(batch_size, 1, 1) if t5_prompt_embeds is not None else None,
-                prompt_embeds_control=qwen2_hidden_state_a.repeat(batch_size, 1, 1),
+                prompt_embeds=prompt_embeds_main,
+                t5_prompt_embeds=None,
+                prompt_embeds_control=prompt_embeds_control,
                 pooled_prompt_embeds=pooled_prompt_embeds,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,

@@ -1,0 +1,21 @@
+services:
+  qwen-flux:
+    build: .
+    container_name: qwen-flux
+    runtime: nvidia
+    working_dir: /app
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CHECKPOINT_DIR=/app/checkpoints
+    volumes:
+      # Map your current directory (code + checkpoints) into the container
+      - .:/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true

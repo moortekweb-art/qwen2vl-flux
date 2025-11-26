@@ -589,7 +589,8 @@ class FluxControlNetImg2ImgPipeline(DiffusionPipeline, FluxLoraLoaderMixin, From
 
         image = image.repeat_interleave(repeat_by, dim=0)
 
-        image = image.to(device=device, dtype=dtype)
+        # Ensure image is on correct device and dtype
+        image = image.float().to(device=device, dtype=dtype)
 
         if do_classifier_free_guidance and not guess_mode:
             image = torch.cat([image] * 2)
