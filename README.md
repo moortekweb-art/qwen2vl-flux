@@ -36,6 +36,59 @@ All with a simple visual interface through ComfyUI or programmatic API.
 
 This implementation uses Qwen2VL as the vision-language model for enhanced multimodal understanding, integrated with the FLUX architecture. It also supports ControlNet features including depth estimation and line detection for more precise image generation control.
 
+## Recent Updates
+
+### ✅ ComfyUI Integration Fixed (Nov 25, 2025)
+
+**Issue**: Custom nodes were not appearing in ComfyUI interface
+**Root Cause**: Symbolic link path resolution issue in node files
+**Solution**: Implemented `os.path.realpath()` for proper symlink handling
+**Result**: All 4 custom nodes now fully functional
+
+**Affected Files**:
+- `comfyui_nodes/qwen2vl_image_encoder.py` - Fixed ✅
+- `comfyui_nodes/flux_generator_dual_gpu.py` - Fixed ✅
+- `comfyui_nodes/controlnet_processor.py` - Fixed ✅
+
+---
+
+## Getting Started with ComfyUI
+
+### **Quick Setup** (5 minutes)
+
+1. **Start ComfyUI**:
+   ```bash
+   cd /mnt/raid0/ComfyUI
+   python3 main.py --listen 0.0.0.0
+   ```
+
+2. **Open browser**:
+   ```
+   http://localhost:8188
+   ```
+
+3. **Load a workflow** from `/workflows/`:
+   - `qwen2vl_flux_variation.json` - Image variations
+   - `qwen2vl_flux_img2img.json` - Image-to-image
+   - `qwen2vl_flux_inpaint.json` - Inpainting
+   - `qwen2vl_flux_controlnet.json` - ControlNet guidance
+
+4. **Generate images**:
+   - Drag workflow file into ComfyUI
+   - Click "Queue" to start generation
+   - Monitor progress in real-time
+
+### **Available Custom Nodes**
+
+All nodes are auto-detected by ComfyUI:
+
+| Node | Purpose | GPU |
+|------|---------|-----|
+| **Qwen2VL Image Encoder** | Process images with vision-language understanding | GPU 0 |
+| **FLUX Generator (Dual-GPU)** | High-quality image generation with dual-GPU optimization | GPU 1 |
+| **ControlNet Processor** | Extract depth maps and edge detection for control | Both |
+| **ControlNet Denoiser** | Optional post-processing for control images | Both |
+
 ## Model Architecture
 
 The Flux model enhances Stable Diffusion by replacing the traditional text encoder with a vision-language model (Qwen2VL), enabling superior multimodal understanding and generation:
